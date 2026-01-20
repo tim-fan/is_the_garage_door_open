@@ -9,7 +9,7 @@ import sys
 TEST_MODE = "--test" in sys.argv
 NTFY_TOPIC="is_my_garage_door_open"
 CAM_URL="http://192.168.0.225:8080/shot.jpg"
-NOTIFY_WHEN_SHUT=True
+NOTIFY_WHEN_SHUT=False
 
 QUERY = """
 I have a camera set up inside the garage to check if the garage door is open or closed.
