@@ -14,11 +14,47 @@ In the past, I may have left the house with the garage door open. Never again!
     * fetch latest image from phone
     * send off to gemini, ask if the door is open
     * if open, send notification to my phone via ntfy
+    * image is saved to a classification dataset structure (to enable training a more lightweight local model in future)
 * script runs on a cron job at specified timings, chosen to stay within daily free tier limits for gemini
 
+## Setup
+
+Install dependencies with `uv`:
+```bash
+uv sync
+```
+
+## Configuration
+
+Before running, set your Gemini API key:
+```bash
+export GEMINI_API_KEY=<your-api-key>
+```
+
+Find your API key at https://aistudio.google.com/app/apikey
+
+## Usage
+
+### Run classification
+```bash
+uv run main.py
+```
+
+Run in test mode (uses local test image, skips network fetch and Gemini):
+```bash
+uv run main.py --test
+```
+
+### View dataset
+
+Once you've collected some images, view them in FiftyOne:
+```bash
+uv run view_dataset_fiftyone.py
+```
+
+This opens an interactive viewer showing all classified images organized by label (door_open/door_closed).
+
 ## Notes
-* before running `export GEMINI_API_KEY=<secret>`
-    * find key at https://aistudio.google.com/app/apikey
 * tried moondream - only accepted one image per query, also slow CPU only, and got first query wrong, so switched to gemini
 
 
