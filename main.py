@@ -3,6 +3,9 @@ from google import genai
 from google.genai import types
 import requests
 import sys
+import os
+from pathlib import Path
+from datetime import datetime
 
 
 # Check for test mode
@@ -29,6 +32,34 @@ Is the door open or closed?
 class DoorStatus(BaseModel):
     is_open: bool
     rationale: str
+
+# Setup dataset directory
+SCRIPT_DIR = Path(__file__).parent
+DATASET_DIR = SCRIPT_DIR / "dataset"
+DATASET_OPEN_DIR = DATASET_DIR / "door_open"
+DATASET_CLOSED_DIR = DATASET_DIR / "door_closed"
+
+def init_dataset_dirs():
+    """Initialize dataset directory structure if it doesn't exist."""
+    DATASET_OPEN_DIR.mkdir(parents=True, exist_ok=True)
+    DATASET_CLOSED_DIR.mkdir(parents=True, exist_ok=True)
+
+def save_to_dataset(image_bytes: bytes, is_open: bool):
+    """Save image to appropriate dataset folder."""
+    if is_open:
+        save_dir = DATASET_OPEN_DIR
+    else:
+        save_dir = DATASET_CLOSED_DIR
+    
+    # Use timestamp for unique filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    filename = f"{timestamp}.jpg"
+    filepath = save_dir / filename
+    
+    with open(filepath, "wb") as f:
+        f.write(image_bytes)
+    
+    print(f"Saved image to {filepath}")
 
 def get_door_status() -> tuple[DoorStatus, bytes, bool]:
     """
@@ -62,6 +93,9 @@ def get_door_status() -> tuple[DoorStatus, bytes, bool]:
         )
         # Access the parsed Pydantic object directly
         door_status = response.parsed
+        
+        if door_status is None:
+            raise ValueError(f"Failed to parse gemini response: {response}")
 
     except Exception as e:
         error_message = f"Error: {str(e)}"
@@ -87,6 +121,11 @@ door_status, image_bytes, is_error = get_status()
 
 print(f"Door is open: {door_status.is_open}")
 print(f"Rationale: {door_status.rationale}")
+
+# Save to dataset only on successful classification (not in test mode, not on error)
+if not TEST_MODE and not is_error and image_bytes:
+    init_dataset_dirs()
+    save_to_dataset(image_bytes, door_status.is_open)
 
 ntfy_url = f"https://ntfy.sh/{NTFY_TOPIC}"
 if is_error:
