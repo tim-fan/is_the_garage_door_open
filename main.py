@@ -9,50 +9,28 @@ from datetime import datetime, time
 import time as time_module
 import subprocess
 from zoneinfo import ZoneInfo
+import config
 
 
 # Check for test mode
 TEST_MODE = "--test" in sys.argv
-NTFY_TOPIC="is_my_garage_door_open"
-CAM_URL="http://192.168.0.225:8080/shot.jpg"
-NOTIFY_WHEN_SHUT=True
 
-# Timezone configuration - all times below are in this timezone
-LOCAL_TIMEZONE = "America/Los_Angeles"  # PST/PDT
-
-# Configuration for presence detection and daytime hours
-PHONE_IPS = {
-    "Tim": "192.168.0.157",
-    "Koi": "192.168.0.110",
-}
-DAYTIME_START = time(6, 0)  # 6:00 AM (in LOCAL_TIMEZONE)
-DAYTIME_END = time(20, 0)   # 8:00 PM (in LOCAL_TIMEZONE)
-
-# Retry configuration for 503 errors
-MAX_RETRIES = 15
-RETRY_INTERVAL_SECONDS = 60
-
-# Continuous monitoring configuration
-CHECK_INTERVAL_SECONDS = 30  # How often to check if we should run the door check
-MAX_API_CALLS_PER_DAY = 20
-
-# Night check times (hours in 24-hour format, in LOCAL_TIMEZONE)
-NIGHT_CHECK_HOURS = [20, 22, 0, 4]  # 8pm, 10pm, midnight, 4am (PST/PDT)
-
-QUERY = """
-I have a camera set up inside the garage to check if the garage door is open or closed.
-
-In daytime, if the door is open, you should see the driveway and maybe the street.
-Otherwise you'll see the inside of the door, maybe with light coming through the door 
-windows.
-
-At night, I'd expect a mostly black image if the door is shut. If it's open you might see 
-the street lights outside.
-
-Here's the latest photo.
-
-Is the door open or closed?
-"""
+# All configuration values are in config.py (shared with presence monitor)
+# Import them for convenience
+NTFY_TOPIC = config.NTFY_TOPIC
+CAM_URL = config.CAM_URL
+NOTIFY_WHEN_SHUT = config.NOTIFY_WHEN_SHUT
+LOCAL_TIMEZONE = config.LOCAL_TIMEZONE
+PHONE_IPS = config.PHONE_IPS
+DAYTIME_START = config.DAYTIME_START
+DAYTIME_END = config.DAYTIME_END
+CHECK_INTERVAL_SECONDS = config.CHECK_INTERVAL_SECONDS
+MAX_API_CALLS_PER_DAY = config.MAX_API_CALLS_PER_DAY
+NIGHT_CHECK_HOURS = config.NIGHT_CHECK_HOURS
+PRESENCE_API_PORT = config.PRESENCE_API_PORT
+MAX_RETRIES = config.MAX_RETRIES
+RETRY_INTERVAL_SECONDS = config.RETRY_INTERVAL_SECONDS
+QUERY = config.QUERY
 
 def get_local_time() -> datetime:
     """Get current time in the configured local timezone."""
@@ -177,18 +155,35 @@ def is_phone_reachable(ip: str) -> bool:
         return False
 
 def is_anyone_home() -> bool:
-    """Check if any phone is reachable."""
-    people_home = []
-    for name, ip in PHONE_IPS.items():
-        if is_phone_reachable(ip):
-            people_home.append(name)
-    
-    if people_home:
-        print(f"Someone is home: {', '.join(people_home)}")
-        return True
-    else:
-        print("No phones reachable - nobody home")
-        return False
+    """Get presence state from the presence monitor service.
+
+    Returns tuple (someone_home: bool, people_home: list[str]).
+    Falls back to direct pings if the presence service is unreachable.
+    """
+    url = f"http://127.0.0.1:{PRESENCE_API_PORT}/status"
+    try:
+        resp = requests.get(url, timeout=1)
+        resp.raise_for_status()
+        data = resp.json()
+        people = data.get("people_home") or []
+        if people:
+            print(f"Someone is home: {', '.join(people)} (from presence service)")
+            return True, people
+        else:
+            print("No phones reachable - nobody home (from presence service)")
+            return False, []
+    except Exception:
+        # fallback: do direct pings (slower)
+        people_home = []
+        for name, ip in PHONE_IPS.items():
+            if is_phone_reachable(ip):
+                people_home.append(name)
+        if people_home:
+            print(f"Someone is home: {', '.join(people_home)} (fallback pings)")
+            return True, people_home
+        else:
+            print("No phones reachable - nobody home (fallback pings)")
+            return False, []
 
 def is_daytime() -> bool:
     """Check if current time is within daytime hours (in configured timezone)."""
@@ -208,13 +203,13 @@ def should_run_door_check(api_limiter: ApiRateLimiter, presence_tracker: Presenc
     if not api_limiter.can_make_api_call():
         return False, "Daily API limit reached"
     
-    # Check if someone is home
-    someone_home = is_anyone_home()
-    
+    # Check presence via presence service (or fallback)
+    someone_home, people = is_anyone_home()
+
     # Check if it's daytime
     daytime = is_daytime()
-    
-    # Delegate to presence tracker for the logic
+
+    # Delegate to presence tracker for the logic (we only pass boolean)
     should_check, reason = presence_tracker.should_check_now(someone_home, daytime)
     
     return should_check, reason

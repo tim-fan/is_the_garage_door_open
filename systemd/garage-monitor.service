@@ -1,0 +1,19 @@
+[Unit]
+Description=Garage Door Monitor
+After=network.target presence-monitor.service
+Wants=presence-monitor.service
+
+[Service]
+Type=simple
+User=tim
+WorkingDirectory=/home/tim/projects/20260119_is_the_garage_door_open/is_the_garage_door_open
+EnvironmentFile=/home/tim/.config/garage-monitor/env
+Environment="PYTHONUNBUFFERED=1"
+StandardOutput=journal
+StandardError=journal
+ExecStart=/home/tim/projects/20260119_is_the_garage_door_open/is_the_garage_door_open/.venv/bin/python3 -u main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

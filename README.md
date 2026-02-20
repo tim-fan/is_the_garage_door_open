@@ -170,7 +170,52 @@ Look for:
 
 ## Running as a Service
 
-To run continuously as a systemd service, create `/etc/systemd/system/garage-monitor.service`:
+### Quick Setup with Systemd (Recommended)
+
+The repository includes systemd service files in the `systemd/` directory. To install:
+
+1. **Run the install script:**
+   ```bash
+   cd systemd
+   ./install.sh
+   ```
+
+2. **Create environment file with your API key:**
+   ```bash
+   mkdir -p ~/.config/garage-monitor
+   cp systemd/env.example ~/.config/garage-monitor/env
+   nano ~/.config/garage-monitor/env  # Edit and add your GEMINI_API_KEY
+   chmod 600 ~/.config/garage-monitor/env
+   ```
+
+3. **Update paths in service files if needed** (the install script uses `/home/tim/...` by default):
+   ```bash
+   sudo nano /etc/systemd/system/presence-monitor.service
+   sudo nano /etc/systemd/system/garage-monitor.service
+   ```
+
+4. **Enable and start the services:**
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable presence-monitor garage-monitor
+   sudo systemctl start presence-monitor garage-monitor
+   ```
+
+5. **Check status:**
+   ```bash
+   sudo systemctl status presence-monitor
+   sudo systemctl status garage-monitor
+   ```
+
+6. **View logs:**
+   ```bash
+   sudo journalctl -u presence-monitor -f
+   sudo journalctl -u garage-monitor -f
+   ```
+
+### Manual Systemd Setup
+
+If you prefer to set up manually, create `/etc/systemd/system/garage-monitor.service`:
 
 ```ini
 [Unit]
@@ -190,6 +235,16 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
+**Note:** For better security, use `EnvironmentFile` instead of inline `Environment`:
+```ini
+EnvironmentFile=/home/your-user/.config/garage-monitor/env
+```
+Then create `/home/your-user/.config/garage-monitor/env` with:
+```
+GEMINI_API_KEY=your-api-key-here
+```
+And set permissions: `chmod 600 ~/.config/garage-monitor/env`
+
 Then enable and start:
 ```bash
 sudo systemctl enable garage-monitor
@@ -201,6 +256,44 @@ View logs:
 ```bash
 sudo journalctl -u garage-monitor -f
 ```
+
+## Presence monitor (separate process)
+
+Presence checking (pinging phones) has been moved into a separate process `presence_monitor.py`.
+This runs a small HTTP status server and debounces per-phone state to avoid false positives.
+
+**Network accessibility:** The presence monitor binds to `0.0.0.0` (all interfaces) on port `8765` by default, so it's accessible from other devices on your network. The main garage monitor process queries it at `http://127.0.0.1:8765/status`.
+
+Run it manually:
+```bash
+cd /path/to/is_the_garage_door_open
+python3 presence_monitor.py &
+# or, run under `uv` if you prefer your environment wrapper:
+uv run python presence_monitor.py &
+```
+
+Or create a systemd service for it (example `/etc/systemd/system/presence-monitor.service`):
+
+```ini
+[Unit]
+Description=Garage Presence Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=<your-user>
+WorkingDirectory=/path/to/is_the_garage_door_open
+ExecStart=/usr/bin/python3 presence_monitor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**See the "Running as a Service" section above for the recommended systemd setup using the provided service files and install script.**
+
+The main `main.py` process queries this service on `http://127.0.0.1:8765/status` for the debounced presence state. If the presence service is down, `main.py` falls back to direct pings.
 
 ## Notes
 * tried moondream - only accepted one image per query, also slow CPU only, and got first query wrong, so switched to gemini
