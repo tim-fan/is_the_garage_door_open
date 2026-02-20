@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, time
 import time as time_module
 import subprocess
+from zoneinfo import ZoneInfo
 
 
 # Check for test mode
@@ -16,13 +17,16 @@ NTFY_TOPIC="is_my_garage_door_open"
 CAM_URL="http://192.168.0.225:8080/shot.jpg"
 NOTIFY_WHEN_SHUT=True
 
+# Timezone configuration - all times below are in this timezone
+LOCAL_TIMEZONE = "America/Los_Angeles"  # PST/PDT
+
 # Configuration for presence detection and daytime hours
 PHONE_IPS = {
     "Tim": "192.168.0.157",
     "Koi": "192.168.0.110",
 }
-DAYTIME_START = time(6, 0)  # 6:00 AM
-DAYTIME_END = time(20, 0)   # 8:00 PM
+DAYTIME_START = time(6, 0)  # 6:00 AM (in LOCAL_TIMEZONE)
+DAYTIME_END = time(20, 0)   # 8:00 PM (in LOCAL_TIMEZONE)
 
 # Retry configuration for 503 errors
 MAX_RETRIES = 15
@@ -32,8 +36,8 @@ RETRY_INTERVAL_SECONDS = 60
 CHECK_INTERVAL_SECONDS = 30  # How often to check if we should run the door check
 MAX_API_CALLS_PER_DAY = 20
 
-# Night check times (hours in 24-hour format)
-NIGHT_CHECK_HOURS = [20, 22, 0, 4]  # 8pm, 10pm, midnight, 4am
+# Night check times (hours in 24-hour format, in LOCAL_TIMEZONE)
+NIGHT_CHECK_HOURS = [20, 22, 0, 4]  # 8pm, 10pm, midnight, 4am (PST/PDT)
 
 QUERY = """
 I have a camera set up inside the garage to check if the garage door is open or closed.
@@ -50,6 +54,10 @@ Here's the latest photo.
 Is the door open or closed?
 """
 
+def get_local_time() -> datetime:
+    """Get current time in the configured local timezone."""
+    return datetime.now(ZoneInfo(LOCAL_TIMEZONE))
+
 class DoorStatus(BaseModel):
     is_open: bool
     rationale: str
@@ -64,7 +72,7 @@ class ApiRateLimiter:
     
     def _reset_if_new_day(self):
         """Reset daily counter if it's a new day."""
-        today = datetime.now().day
+        today = get_local_time().day
         if self.current_day != today:
             self.current_day = today
             self.api_calls_today = 0
@@ -97,7 +105,7 @@ class PresenceTracker:
     
     def _reset_night_checks_if_new_day(self):
         """Reset night check tracking at start of new day."""
-        current_hour = datetime.now().hour
+        current_hour = get_local_time().hour
         # Reset at 6am (start of new cycle)
         if current_hour == 6 and self.completed_night_checks:
             print("New day (6am), resetting night check tracking")
@@ -109,7 +117,7 @@ class PresenceTracker:
         Returns (should_check, reason).
         """
         self._reset_night_checks_if_new_day()
-        current_hour = datetime.now().hour
+        current_hour = get_local_time().hour
         
         # During daytime: only check on home -> out transition
         if is_daytime:
@@ -183,8 +191,8 @@ def is_anyone_home() -> bool:
         return False
 
 def is_daytime() -> bool:
-    """Check if current time is within daytime hours."""
-    current_time = datetime.now().time()
+    """Check if current time is within daytime hours (in configured timezone)."""
+    current_time = get_local_time().time()
     is_day = DAYTIME_START <= current_time <= DAYTIME_END
     return is_day
 
@@ -219,8 +227,8 @@ def save_to_dataset(image_bytes: bytes, is_open: bool):
     else:
         save_dir = DATASET_CLOSED_DIR
     
-    # Use timestamp for unique filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    # Use timestamp for unique filename (in local timezone)
+    timestamp = get_local_time().strftime("%Y%m%d_%H%M%S_%f")[:-3]
     filename = f"{timestamp}.jpg"
     filepath = save_dir / filename
     
@@ -383,10 +391,12 @@ def main():
     """Main continuous monitoring loop."""
     print("Starting garage door monitor...")
     print(f"Configuration:")
+    print(f"  - Local timezone: {LOCAL_TIMEZONE}")
+    print(f"  - Current local time: {get_local_time().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print(f"  - Check interval: {CHECK_INTERVAL_SECONDS}s")
     print(f"  - Max API calls per day: {MAX_API_CALLS_PER_DAY}")
-    print(f"  - Daytime hours: {DAYTIME_START} - {DAYTIME_END}")
-    print(f"  - Night check hours: {sorted(NIGHT_CHECK_HOURS)}")
+    print(f"  - Daytime hours: {DAYTIME_START} - {DAYTIME_END} ({LOCAL_TIMEZONE})")
+    print(f"  - Night check hours: {sorted(NIGHT_CHECK_HOURS)} ({LOCAL_TIMEZONE})")
     print(f"  - Phone IPs: {PHONE_IPS}")
     print(f"  - Test mode: {TEST_MODE}")
     print()
@@ -400,7 +410,7 @@ def main():
     
     while True:
         try:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            timestamp = get_local_time().strftime("%Y-%m-%d %H:%M:%S %Z")
             print(f"[{timestamp}] Checking conditions...")
             
             should_check, reason = should_run_door_check(api_limiter, presence_tracker)

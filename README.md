@@ -62,9 +62,15 @@ PHONE_IPS = {
 }
 ```
 
-3. **Optional settings** in `main.py`:
-- `DAYTIME_START` / `DAYTIME_END`: Adjust daytime hours (default: 6am - 8pm)
-- `NIGHT_CHECK_HOURS`: Change night check times (default: [20, 22, 0, 4])
+3. **Timezone** - Edit `main.py` and set `LOCAL_TIMEZONE` to your local timezone:
+```python
+LOCAL_TIMEZONE = "America/Los_Angeles"  # PST/PDT
+```
+All time-based settings (daytime hours, night check times) are interpreted in this timezone, regardless of the system's timezone. Use standard [IANA timezone names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
+
+4. **Optional settings** in `main.py`:
+- `DAYTIME_START` / `DAYTIME_END`: Adjust daytime hours (default: 6am - 8pm in LOCAL_TIMEZONE)
+- `NIGHT_CHECK_HOURS`: Change night check times (default: [20, 22, 0, 4] in LOCAL_TIMEZONE)
 - `CHECK_INTERVAL_SECONDS`: How often to evaluate conditions (default: 30s)
 - `MAX_API_CALLS_PER_DAY`: Daily API limit (default: 20)
 
