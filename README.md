@@ -8,98 +8,74 @@ In the past, I may have left the house with the garage door open. Never again!
 
 ## Overview
 
-* IP camera app runs on old Android phone, mounted in the garage
-* this script runs continuously on a nuc on the same network
-* script performs the actions:
-    * fetch latest image from phone
-    * send off to gemini, ask if the door is open
-    * if open, send notification to my phone via ntfy
-    * image is saved to a classification dataset structure (to enable training a more lightweight local model in future)
-* intelligent timing ensures checks happen when needed while staying within daily API limits
+Monitors garage door via camera + AI with smart timing to stay within free API limits:
 
-## Check Timing Logic
+- **Hardware**: Old Android phone running IP camera app, mounted in garage
+- **Presence detection**: Separate process pings phones to detect when you're home (with debouncing to avoid false positives)
+- **Smart timing**: Only checks door when you leave (daytime) or at scheduled hours (night)
+- **Gemini Vision**: Analyzes camera image to determine if door is open
+- **Notifications**: Sends alerts via ntfy if door is left open
+- **Dataset**: Saves classified images for potential future local model training
 
-The script runs continuously and checks conditions every 30 seconds to determine if it should query the Gemini API:
+## How It Works
 
 ### Daytime (6am - 8pm)
-- **Only checks once when leaving home**: Detects the transition from "someone home" → "nobody home"
-- Pings configured phone IPs to determine presence
-- Once the check runs after you leave, it won't check again until you return and leave again
-- No checks while someone is home
+- Monitors phone presence via WiFi pings
+- Checks door **once** when everyone leaves (home → away transition)
+- Won't check again until someone returns home first
+- Prevents wasteful API calls while you're home
 
-### Night (8pm - 6am)
-- **Scheduled checks at specific hours**: 8pm, 10pm, midnight, and 4am
-- Each hour's check runs only once per night
-- Checks run regardless of whether anyone is home
+### Night (8pm - 6am)  
+- Scheduled checks at: **8pm, 10pm, midnight, 4am**
+- Each check runs once per night regardless of presence
+- Ensures door is closed before bed and overnight
 
-### Additional Safeguards
-- **Daily API limit**: Maximum 20 API calls per day
-- **503 retry logic**: If Gemini returns 503 Service Unavailable, retries up to 15 times (1 minute intervals)
-- Resets counters at start of each new day
+### Safeguards
+- **20 API calls/day max** (well within free tier limits)
+- **503 retry**: Up to 15 retries if Gemini is temporarily unavailable
+- **Graceful fallback**: If presence service is down, falls back to direct pings
 
 ## Setup
 
-Install dependencies with `uv`:
-```bash
-uv sync
-```
+1. **Install dependencies:**
+   ```bash
+   uv sync
+   ```
 
-## Configuration
+2. **Configure settings** in `config.py`:
+   - `PHONE_IPS`: Your phones' static IP addresses
+   - `LOCAL_TIMEZONE`: Your timezone (e.g., "America/Los_Angeles")
+   - `DAYTIME_START` / `DAYTIME_END`: Daytime hours (default 6am-8pm)
+   - `NIGHT_CHECK_HOURS`: Night check times (default [20, 22, 0, 4])
+   - `CAM_URL`: IP camera URL
+   - `NTFY_TOPIC`: Your ntfy.sh topic name
 
-Before running, configure the following:
-
-1. **Gemini API key** - Set as environment variable:
-```bash
-export GEMINI_API_KEY=<your-api-key>
-```
-Find your API key at https://aistudio.google.com/app/apikey
-
-2. **Phone IPs** - Edit `main.py` and update `PHONE_IPS` with your phones' static IP addresses:
-```python
-PHONE_IPS = {
-    "Tim": "192.168.0.157",
-    "Koi": "192.168.0.110",
-}
-```
-
-3. **Timezone** - Edit `main.py` and set `LOCAL_TIMEZONE` to your local timezone:
-```python
-LOCAL_TIMEZONE = "America/Los_Angeles"  # PST/PDT
-```
-All time-based settings (daytime hours, night check times) are interpreted in this timezone, regardless of the system's timezone. Use standard [IANA timezone names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
-
-4. **Optional settings** in `main.py`:
-- `DAYTIME_START` / `DAYTIME_END`: Adjust daytime hours (default: 6am - 8pm in LOCAL_TIMEZONE)
-- `NIGHT_CHECK_HOURS`: Change night check times (default: [20, 22, 0, 4] in LOCAL_TIMEZONE)
-- `CHECK_INTERVAL_SECONDS`: How often to evaluate conditions (default: 30s)
-- `MAX_API_CALLS_PER_DAY`: Daily API limit (default: 20)
+3. **Set Gemini API key:**
+   ```bash
+   export GEMINI_API_KEY=<your-api-key>
+   ```
+   Get your key at https://aistudio.google.com/app/apikey
 
 ## Usage
 
-### Run the monitor
-Start the continuous monitoring service:
+### Run manually:
 ```bash
+# Start presence monitor (runs in background)
+python3 presence_monitor.py &
+
+# Start garage monitor
 uv run main.py
 ```
 
-The script will run indefinitely, checking conditions and making API calls as needed. Press `Ctrl+C` to stop.
-
-For systemd service setup, see the "Running as a Service" section below.
-
-### Test mode
-Run in test mode (uses local test image, skips presence detection):
+### Test mode:
 ```bash
-uv run main.py --test
+uv run main.py --test  # Uses local test image, skips presence detection
 ```
 
-### View dataset
-
-Once you've collected some images, view them in FiftyOne:
+### View collected images:
 ```bash
-uv run view_dataset_fiftyone.py
+uv run view_dataset_fiftyone.py  # Opens interactive viewer
 ```
-
-This opens an interactive viewer showing all classified images organized by label (door_open/door_closed).
 
 ## Testing the Timing Logic
 
@@ -168,132 +144,50 @@ Look for:
 - API call counts staying under daily limit
 - No unexpected check patterns
 
-## Running as a Service
+## Running as a Service (systemd)
 
-### Quick Setup with Systemd (Recommended)
-
-The repository includes systemd service files in the `systemd/` directory. To install:
+**Recommended for production use.**
 
 1. **Run the install script:**
    ```bash
-   cd systemd
-   ./install.sh
+   cd systemd && ./install.sh
    ```
 
-2. **Create environment file with your API key:**
+2. **Create environment file:**
    ```bash
    mkdir -p ~/.config/garage-monitor
    cp systemd/env.example ~/.config/garage-monitor/env
-   nano ~/.config/garage-monitor/env  # Edit and add your GEMINI_API_KEY
+   nano ~/.config/garage-monitor/env  # Add your GEMINI_API_KEY
    chmod 600 ~/.config/garage-monitor/env
    ```
 
-3. **Update paths in service files if needed** (the install script uses `/home/tim/...` by default):
+3. **Update paths in service files if needed:**
    ```bash
    sudo nano /etc/systemd/system/presence-monitor.service
    sudo nano /etc/systemd/system/garage-monitor.service
    ```
 
-4. **Enable and start the services:**
+4. **Enable and start:**
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable presence-monitor garage-monitor
    sudo systemctl start presence-monitor garage-monitor
    ```
 
-5. **Check status:**
+5. **Monitor logs:**
    ```bash
-   sudo systemctl status presence-monitor
-   sudo systemctl status garage-monitor
-   ```
-
-6. **View logs:**
-   ```bash
-   sudo journalctl -u presence-monitor -f
    sudo journalctl -u garage-monitor -f
+   sudo journalctl -u presence-monitor -f
    ```
 
-### Manual Systemd Setup
+### Architecture
 
-If you prefer to set up manually, create `/etc/systemd/system/garage-monitor.service`:
+Two systemd services work together:
 
-```ini
-[Unit]
-Description=Garage Door Monitor
-After=network.target
+- **`presence-monitor`**: Pings phones every 10s, debounces state (requires 3 consistent checks), exposes HTTP API on port 8765
+- **`garage-monitor`**: Main process that queries presence service and checks garage door based on timing logic
 
-[Service]
-Type=simple
-User=<your-user>
-WorkingDirectory=/path/to/is_the_garage_door_open
-Environment="GEMINI_API_KEY=<your-api-key>"
-ExecStart=/snap/bin/uv run main.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Note:** For better security, use `EnvironmentFile` instead of inline `Environment`:
-```ini
-EnvironmentFile=/home/your-user/.config/garage-monitor/env
-```
-Then create `/home/your-user/.config/garage-monitor/env` with:
-```
-GEMINI_API_KEY=your-api-key-here
-```
-And set permissions: `chmod 600 ~/.config/garage-monitor/env`
-
-Then enable and start:
-```bash
-sudo systemctl enable garage-monitor
-sudo systemctl start garage-monitor
-sudo systemctl status garage-monitor
-```
-
-View logs:
-```bash
-sudo journalctl -u garage-monitor -f
-```
-
-## Presence monitor (separate process)
-
-Presence checking (pinging phones) has been moved into a separate process `presence_monitor.py`.
-This runs a small HTTP status server and debounces per-phone state to avoid false positives.
-
-**Network accessibility:** The presence monitor binds to `0.0.0.0` (all interfaces) on port `8765` by default, so it's accessible from other devices on your network. The main garage monitor process queries it at `http://127.0.0.1:8765/status`.
-
-Run it manually:
-```bash
-cd /path/to/is_the_garage_door_open
-python3 presence_monitor.py &
-# or, run under `uv` if you prefer your environment wrapper:
-uv run python presence_monitor.py &
-```
-
-Or create a systemd service for it (example `/etc/systemd/system/presence-monitor.service`):
-
-```ini
-[Unit]
-Description=Garage Presence Monitor
-After=network.target
-
-[Service]
-Type=simple
-User=<your-user>
-WorkingDirectory=/path/to/is_the_garage_door_open
-ExecStart=/usr/bin/python3 presence_monitor.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**See the "Running as a Service" section above for the recommended systemd setup using the provided service files and install script.**
-
-The main `main.py` process queries this service on `http://127.0.0.1:8765/status` for the debounced presence state. If the presence service is down, `main.py` falls back to direct pings.
+The garage monitor depends on the presence monitor but will fall back to direct pings if it's unavailable.
 
 ## Notes
 * tried moondream - only accepted one image per query, also slow CPU only, and got first query wrong, so switched to gemini
